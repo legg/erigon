@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bytes"
 	"container/heap"
 	"context"
 	"fmt"
@@ -181,20 +182,33 @@ func (rw *Worker22) runTxTask(txTask *state.TxTask) {
 	ibs := state.New(rw.stateReader)
 	rules := txTask.Rules
 	daoForkTx := rw.chainConfig.DAOForkSupport && rw.chainConfig.DAOForkBlock != nil && rw.chainConfig.DAOForkBlock.Uint64() == txTask.BlockNum && txTask.TxIndex == -1
-	var err error
-	if txTask.BlockNum == 0 && txTask.TxIndex == -1 {
-		//fmt.Printf("txNum=%d, blockNum=%d, Genesis\n", txTask.TxNum, txTask.BlockNum)
-		// Genesis block
-		_, ibs, err = rw.genesis.ToBlock()
-		if err != nil {
-			panic(err)
-		}
-		// For Genesis, rules should be empty, so that empty accounts can be included
-		rules = &params.Rules{}
-	} else if daoForkTx {
+	if daoForkTx {
 		//fmt.Printf("txNum=%d, blockNum=%d, DAO fork\n", txTask.TxNum, txTask.BlockNum)
 		misc.ApplyDAOHardFork(ibs)
 		ibs.SoftFinalise()
+	}
+
+	var err error
+	if txTask.BlockNum == 1 && txTask.TxIndex == -1 {
+		fmt.Printf("txNum=%d, blockNum=%d, Genesis\n", txTask.TxNum, txTask.BlockNum)
+		// Genesis block
+		var genBlock *types.Block
+		genBlock, ibs, err = rw.genesis.ToBlock()
+		if err != nil {
+			panic(err)
+		}
+		if bytes.Equal(genBlock.Root().Bytes(), txTask.Block.Root().Bytes()) {
+			fmt.Printf("genesis root %x %x\n", genBlock.Root().Bytes(), txTask.Block.Root().Bytes())
+		}
+		// For Genesis, rules should be empty, so that empty accounts can be included
+		rules = &params.Rules{}
+		if err := ibs.CommitBlock(rules, rw.stateWriter); err != nil {
+			panic(err)
+		}
+
+		//fmt.Printf("txNum=%d, blockNum=%d, DAO fork\n", txTask.TxNum, txTask.BlockNum)
+		// misc.ApplyDAOHardFork(ibs)
+		// ibs.SoftFinalise()
 	} else if txTask.TxIndex == -1 {
 		// Block initialisation
 		//fmt.Printf("txNum=%d, blockNum=%d, initialisation of the block\n", txTask.TxNum, txTask.BlockNum)
@@ -261,9 +275,9 @@ func (rw *Worker22) runTxTask(txTask *state.TxTask) {
 	// Prepare read set, write set and balanceIncrease set and send for serialisation
 	if txTask.Error == nil {
 		txTask.BalanceIncreaseSet = ibs.BalanceIncreaseSet()
-		//for addr, bal := range txTask.BalanceIncreaseSet {
-		//	fmt.Printf("[%x]=>[%d]\n", addr, &bal)
-		//}
+		// for addr, bal := range txTask.BalanceIncreaseSet {
+		// 	fmt.Printf("[%x]=>[%d]\n", addr, &bal)
+		// }
 		if err = ibs.MakeWriteSet(rules, rw.stateWriter); err != nil {
 			panic(err)
 		}
