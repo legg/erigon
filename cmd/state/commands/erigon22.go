@@ -21,6 +21,10 @@ import (
 	"github.com/ledgerwatch/erigon-lib/kv"
 	kv2 "github.com/ledgerwatch/erigon-lib/kv/mdbx"
 	libstate "github.com/ledgerwatch/erigon-lib/state"
+	"github.com/ledgerwatch/log/v3"
+	"github.com/spf13/cobra"
+	"golang.org/x/sync/semaphore"
+
 	"github.com/ledgerwatch/erigon/cmd/sentry/sentry"
 	"github.com/ledgerwatch/erigon/common"
 	"github.com/ledgerwatch/erigon/consensus"
@@ -40,9 +44,6 @@ import (
 	"github.com/ledgerwatch/erigon/turbo/services"
 	"github.com/ledgerwatch/erigon/turbo/snapshotsync"
 	stages2 "github.com/ledgerwatch/erigon/turbo/stages"
-	"github.com/ledgerwatch/log/v3"
-	"github.com/spf13/cobra"
-	"golang.org/x/sync/semaphore"
 )
 
 var (
@@ -159,6 +160,7 @@ func (rw *Worker22) run() {
 func (rw *Worker22) runTxTask(txTask *state.TxTask) {
 	rw.lock.Lock()
 	defer rw.lock.Unlock()
+
 	if rw.tx == nil {
 		var err error
 		if rw.tx, err = rw.db.BeginRo(rw.ctx); err != nil {
@@ -189,7 +191,7 @@ func (rw *Worker22) runTxTask(txTask *state.TxTask) {
 	}
 
 	var err error
-	if txTask.BlockNum == 1 && txTask.TxIndex == -1 {
+	if txTask.BlockNum < 2 && txTask.TxIndex == -1 {
 		fmt.Printf("txNum=%d, blockNum=%d, Genesis\n", txTask.TxNum, txTask.BlockNum)
 		// Genesis block
 		var genBlock *types.Block
@@ -197,19 +199,18 @@ func (rw *Worker22) runTxTask(txTask *state.TxTask) {
 		if err != nil {
 			panic(err)
 		}
-		if bytes.Equal(genBlock.Root().Bytes(), txTask.Block.Root().Bytes()) {
-			fmt.Printf("genesis root %x %x\n", genBlock.Root().Bytes(), txTask.Block.Root().Bytes())
+		if !bytes.Equal(genBlock.Root().Bytes(), txTask.Block.Root().Bytes()) {
+			fmt.Printf("genesis root mismatch\n")
 		}
+		fmt.Printf("genesis root %x %x\n", genBlock.Root().Bytes(), txTask.Block.Root().Bytes())
 		// For Genesis, rules should be empty, so that empty accounts can be included
 		rules = &params.Rules{}
 		if err := ibs.CommitBlock(rules, rw.stateWriter); err != nil {
 			panic(err)
 		}
+	}
 
-		//fmt.Printf("txNum=%d, blockNum=%d, DAO fork\n", txTask.TxNum, txTask.BlockNum)
-		// misc.ApplyDAOHardFork(ibs)
-		// ibs.SoftFinalise()
-	} else if txTask.TxIndex == -1 {
+	if txTask.TxIndex == -1 {
 		// Block initialisation
 		//fmt.Printf("txNum=%d, blockNum=%d, initialisation of the block\n", txTask.TxNum, txTask.BlockNum)
 		if rw.isPoSA {
